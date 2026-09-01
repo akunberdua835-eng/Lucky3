@@ -1,0 +1,46 @@
+{
+  "app_name": "Sistem Rekap Penerimaan dan Pembelian Buah Sawit - PT SJM",
+  "context": "Dashboard & Operations Hybrid Platform for Palm Oil Collection (Pengepul Buah Sawit)",
+  "emotional_tone": "Professional, Industrial, Reliable, High-Precision Agri-Business",
+  "archetype": "ORGANIC & EARTHY with PERFORMANCE PRO precision",
+  "typography": {
+    "heading_font": "Outfit, sans-serif",
+    "body_font": "Plus Jakarta Sans, sans-serif",
+    "mono_font": "JetBrains Mono, monospace"
+  },
+  "colors": {
+    "primary": "#15803d",
+    "primary_hover": "#166534",
+    "background": "#f8fafc",
+    "card_background": "#ffffff",
+    "text_primary": "#0f172a",
+    "text_secondary": "#64748b",
+    "accent_earth": "#b45309",
+    "accent_gold": "#d97706",
+    "success": "#10b981",
+    "warning": "#f59e0b",
+    "danger": "#ef4444",
+    "border": "#e2e8f0"
+  },
+  "visual_enhancers": {
+    "border_radius": "0.5rem",
+    "shadow": "0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)",
+    "glassmorphism": "backdrop-blur-xl bg-white/80 border border-white/20"
+  },
+  "components": [
+    "Login & Signup with Admin Approval",
+    "Admin User Management & Approval Panel",
+    "Monthly Batch Management (New Batch archives previous, preserves batch history in DB)",
+    "Realistic Transaction Generator (Operational hours, vehicle capacities, delivery gaps, exact target allocation across dates, consecutive owner validation, min 1 hr 45 min gap for same owner, cargo reason logs)",
+    "Weighing & Purchase CRUD with 2-decimal Netto Ton, daily editable price per kg, delete-by-day feature",
+    "Voucher Print Preview & Edit with automatic code generation",
+    "Daily, Monthly, and Per-Owner Summaries with Filtered Finance Workspace",
+    "Interactive Charts (Recharts)",
+    "Excel Export (SheetJS/XLSX)"
+  ],
+  "image_urls": {
+    "plantation_hero": "https://images.unsplash.com/photo-1781453642124-9d6b3f4b18ac?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzZ8MHwxfHNlYXJjaHwzfHxwYWxtJTIwb2lsJTIwZnJ1aXQlMjB0cnVjayUyMHdlaWdoaW5nJTIwc2NhbGV8ZW58MHx8fHwxNzg4MjM0NTY2fDA&ixlib=rb-4.1.0&q=85",
+    "tractor_weigh": "https://images.unsplash.com/photo-1742259711806-b70c6585b8f9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzZ8MHwxfHNlYXJjaHwyfHxwYWxtJTIwb2lsJTIwZnJ1aXQlMjB0cnVjayUyMHdlaWdoaW5nJTIwc2NhbGV8ZW58MHx8fHwxNzg4MjM0NTY2fDA&ixlib=rb-4.1.0&q=85"
+  },
+  "instructions_to_main_agent": "Ensure all database models support batch history, owner management, vehicle management, pricing per day, and transaction generation rules. Email notifications via Resend for login/edit and account approvals must be supported or simulated robustly with status banners/logs if API keys are absent."
+}
