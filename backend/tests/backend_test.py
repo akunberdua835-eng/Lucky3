@@ -399,16 +399,61 @@ class TestAnalyticsExport:
         assert r.status_code == 200
         assert "spreadsheetml" in r.headers.get("content-type", "")
         wb = load_workbook(BytesIO(r.content))
-        ws = wb.active
-        assert ws["A1"].value == "Kode"
-        assert ws["I2"].value == "=G2-H2", ws["I2"].value
-        assert ws["L2"].value == "=(G2-H2)*K2", ws["L2"].value
-        assert ws["J2"].value == "=ROUND((G2-H2)/1000,2)", ws["J2"].value
-        total_row = 4
-        assert ws[f"A{total_row}"].value == "TOTAL"
-        assert ws[f"G{total_row}"].value == "=SUM(G2:G3)"
-        assert ws[f"I{total_row}"].value == "=SUM(I2:I3)"
-        assert ws[f"L{total_row}"].value == "=SUM(L2:L3)"
+        # Workbook multi-sheet: buku penerimaan + rekap pemilik (per orang) + harian + laba rugi + harga
+        assert "Rekap Pemilik" in wb.sheetnames, wb.sheetnames
+        assert "Rekap Harian" in wb.sheetnames, wb.sheetnames
+        assert "Laba Rugi" in wb.sheetnames, wb.sheetnames
+        assert "Harga Harian" in wb.sheetnames, wb.sheetnames
+        ws = wb["Buku Penerimaan"]
+        assert "BUKU PENERIMAAN" in str(ws["A1"].value)
+        hr = next(row for row in range(1, 12) if ws.cell(row=row, column=1).value == "Kode")
+        first = hr + 1
+        assert ws.cell(row=first, column=10).value == f"=H{first}-I{first}"
+        assert ws.cell(row=first, column=11).value == f"=ROUND(J{first}/1000,2)"
+        assert ws.cell(row=first, column=13).value == f"=J{first}*L{first}"
+        last = first + 1  # dua transaksi pada tanggal test
+        total_row = last + 1
+        assert ws.cell(row=total_row, column=1).value == "TOTAL"
+        assert ws.cell(row=total_row, column=8).value == f"=SUM(H{first}:H{last})"
+        assert ws.cell(row=total_row, column=10).value == f"=SUM(J{first}:J{last})"
+        assert ws.cell(row=total_row, column=13).value == f"=SUM(M{first}:M{last})"
+
+    def test_owner_daily_finance_exports(self, admin_client, active_batch):
+        for path, sheet in (("owners-excel", "Ringkasan Pemilik"),
+                            ("daily-excel", "Rekap Harian"),
+                            ("finance-excel", "Laba Rugi Harian")):
+            r = admin_client.get(f"{BASE_URL}/api/export/{path}?batch_id={active_batch}", timeout=120)
+            assert r.status_code == 200, (path, r.status_code)
+            assert "spreadsheetml" in r.headers.get("content-type", "")
+            wb = load_workbook(BytesIO(r.content))
+            assert sheet in wb.sheetnames, (path, wb.sheetnames)
+
+    def test_owner_export_single_person(self, admin_client, active_batch):
+        txs = admin_client.get(f"{BASE_URL}/api/transactions?batch_id={active_batch}", timeout=60).json()
+        owner = txs[0]["owner_name"]
+        r = admin_client.get(f"{BASE_URL}/api/export/owners-excel?batch_id={active_batch}&owner={owner}", timeout=120)
+        assert r.status_code == 200
+        wb = load_workbook(BytesIO(r.content))
+        assert wb.sheetnames == [owner[:31]], wb.sheetnames
+        bad = admin_client.get(f"{BASE_URL}/api/export/owners-excel?batch_id={active_batch}&owner=Tidak%20Ada", timeout=60)
+        assert bad.status_code == 404
+
+    def test_prices_crud_and_export(self, admin_client):
+        for date, price, note in (("2026-04-01", 2500, "awal"), ("2026-04-02", 2700, "naik"), ("2026-04-03", 2600, "turun")):
+            assert admin_client.post(f"{BASE_URL}/api/prices", json={
+                "date": date, "price_per_kg": price, "note": note}, timeout=30).status_code == 200
+        data = admin_client.get(f"{BASE_URL}/api/prices?month=2026-04", timeout=30).json()
+        rows = {p["date"]: p for p in data["prices"]}
+        assert rows["2026-04-01"]["change"] is None and rows["2026-04-01"]["trend"] == "awal"
+        assert rows["2026-04-02"]["change"] == 200 and rows["2026-04-02"]["trend"] == "naik"
+        assert rows["2026-04-03"]["change"] == -100 and rows["2026-04-03"]["trend"] == "turun"
+        assert data["stats"]["high"] == 2700 and data["stats"]["low"] == 2500
+        r = admin_client.get(f"{BASE_URL}/api/export/prices-excel?month=2026-04", timeout=60)
+        assert r.status_code == 200 and "Harga Harian" in load_workbook(BytesIO(r.content)).sheetnames
+        assert admin_client.post(f"{BASE_URL}/api/prices", json={"date": "2026-04-04", "price_per_kg": 0}, timeout=30).status_code == 400
+        for date in ("2026-04-01", "2026-04-02", "2026-04-03"):
+            assert admin_client.delete(f"{BASE_URL}/api/prices/{date}", timeout=30).status_code == 200
+        assert admin_client.delete(f"{BASE_URL}/api/prices/2026-04-01", timeout=30).status_code == 404
 
     def test_export_requires_auth(self, api_client):
         assert api_client.get(f"{BASE_URL}/api/export/excel", timeout=60).status_code == 401

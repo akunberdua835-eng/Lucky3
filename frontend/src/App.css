@@ -8,3 +8,57 @@
 .batch-create{display:flex;gap:10px;align-items:flex-end;margin:16px 0;padding:14px;background:#eef5ef;border:1px solid #d7e4da;border-radius:8px}.batch-create label{flex:1;margin-top:0!important}.batch-create input{margin-bottom:0!important}.batch-list{max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:white}.batch-row{display:flex;justify-content:space-between;align-items:center;padding:11px 13px;border-bottom:1px solid #edf1ed}.batch-row:last-child{border-bottom:0}.batch-row b{display:block;font-size:13px}.batch-row small{display:block;font:10px 'JetBrains Mono';color:var(--muted);margin-top:3px}
 
 .section-head.pad{padding:18px 18px 6px}.section-head.pad select{background:white;border:1px solid var(--line);border-radius:7px;padding:8px 10px}.total-row td{background:#eef5ef;border-top:2px solid var(--green)}.profit-pos{color:var(--green);font-weight:700}.profit-neg{color:#ba4e43;font-weight:700}.metric.red{border-left-color:#ba4e43}.metric.red strong{color:#ba4e43}.metric.green strong{color:var(--green)}.finance-form{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr auto;gap:12px;align-items:end;background:#fff;border:1px solid var(--line);border-radius:8px;padding:16px 18px;margin-bottom:20px}.finance-form>div{grid-column:1/-1}.finance-form h3{font-size:17px;margin-top:4px}.finance-form label{display:block;font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.6px}.finance-form input,.finance-form select{display:block;width:100%;border:1px solid var(--line);background:white;padding:10px;border-radius:6px;margin-top:6px;font:inherit}.finance-table{min-width:1150px}@media(max-width:950px){.finance-form{grid-template-columns:1fr 1fr}}@media(max-width:650px){.finance-form{grid-template-columns:1fr}}
+
+/* ===== Phase 3: export tools, scrollable tables, monitoring harga ===== */
+.head-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.head-tools select,.head-tools input[type=month],.head-tools input[type=date]{background:#fff;border:1px solid var(--line);border-radius:7px;padding:8px 10px;font:inherit;color:var(--ink)}
+.outline.sm,.ghost.sm{padding:7px 10px;font-size:11px;border-radius:6px}
+.ghost{display:inline-flex;align-items:center;gap:6px;background:#eef5ef;border:1px solid #d7e4da;color:var(--green);border-radius:7px;padding:9px 11px;font-weight:700;font-size:12px;transition:.18s}
+.ghost:hover{background:var(--green);border-color:var(--green);color:#fff}
+.outline:disabled,.ghost:disabled{opacity:.5;cursor:not-allowed}
+.table-wrap.scroll-y{max-height:320px;overflow-y:auto;overflow-x:auto}
+.table-wrap.scroll-y.tall{max-height:460px}
+.table-wrap.scroll-y thead th{position:sticky;top:0;z-index:3;background:#f3f7f4;box-shadow:inset 0 -1px 0 var(--line)}
+.table-wrap.scroll-y .total-row td{position:sticky;bottom:0;z-index:2}
+.table-wrap.scroll-y::-webkit-scrollbar{width:9px;height:9px}
+.table-wrap.scroll-y::-webkit-scrollbar-thumb{background:#c8d6cc;border-radius:6px}
+.table-wrap.scroll-y::-webkit-scrollbar-track{background:#f2f6f3}
+.trend{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;white-space:nowrap}
+.trend.up{background:#e6f5ec;color:#15803d}
+.trend.down{background:#fdeeeb;color:#ba4e43}
+.trend.flat{background:#eef1ee;color:var(--muted)}
+.price-form{display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:12px;align-items:end;background:#fff;border:1px solid var(--line);border-radius:8px;padding:16px 18px;margin-bottom:20px}
+.price-form>div{grid-column:1/-1}
+.price-form h3{font-size:17px;margin-top:4px}
+.price-form label{display:block;font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.6px}
+.price-form input{display:block;width:100%;border:1px solid var(--line);background:#fff;padding:10px;border-radius:6px;margin-top:6px;font:inherit;color:var(--ink)}
+.price-form input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px #15803d1f}
+.price-table{min-width:820px}
+.price-table .row-empty td{background:#fbfcfb;color:var(--muted)}
+.price-table .note-cell{max-width:320px;white-space:normal;line-height:1.4}
+@media(max-width:950px){.price-form{grid-template-columns:1fr 1fr}}
+@media(max-width:650px){.price-form{grid-template-columns:1fr}.head-tools{width:100%}}
+.price-table .small-primary,.price-table .row-actions{white-space:nowrap}
+.price-table .small-primary{display:inline-flex;align-items:center;gap:5px;padding:6px 10px}
+
+/* ===== PPh 22 dikelola ===== */
+.pph-setting{display:grid;grid-template-columns:1fr auto auto;gap:14px;align-items:end;background:#fff;border:1px solid var(--line);border-left:4px solid var(--gold);border-radius:8px;padding:16px 18px;margin-bottom:18px}
+.pph-setting h3{font-size:17px;margin-top:4px}
+.pph-setting p{margin-top:5px;font-size:11px}
+.pph-setting label{display:block;font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.6px}
+.pph-setting input{display:block;width:130px;border:1px solid var(--line);background:#fff;padding:10px;border-radius:6px;margin-top:6px;font:inherit;color:var(--ink)}
+.pph-setting input:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px #b9781926}
+.pph-cell{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:190px}
+.pph-badge{display:inline-block;margin-top:5px;font-size:9px;font-weight:700;letter-spacing:.4px;padding:3px 7px;border-radius:999px;white-space:nowrap}
+.pph-badge.auto{background:#eef2ef;color:var(--muted)}
+.pph-badge.manual{background:#fff4df;color:#a36410}
+.mode-switch{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px}
+.mode-switch button{background:#eef2ef;color:var(--muted);padding:10px;border-radius:7px;font-weight:700;font-size:11px;transition:.18s}
+.mode-switch button.on{background:var(--green);color:#fff}
+.pph-preview{display:grid;grid-template-columns:1fr 1fr;gap:12px;background:#eef5ef;border:1px solid #d7e4da;border-radius:8px;padding:14px;margin:16px 0 4px}
+.pph-preview small{display:block;font-size:9px;letter-spacing:1px;font-weight:700;color:var(--muted)}
+.pph-preview b{display:block;font:700 19px Outfit;margin-top:6px}
+.profit-pos{color:var(--green);font-weight:700}
+.profit-neg{color:#ba4e43;font-weight:700}
+.finance-table{min-width:1180px}
+@media(max-width:800px){.pph-setting{grid-template-columns:1fr}.pph-setting input{width:100%}}

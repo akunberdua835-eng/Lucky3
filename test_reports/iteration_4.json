@@ -1,0 +1,95 @@
+{
+  "summary": "Completed comprehensive testing of PPh 22 feature (Fase 4) and full regression testing. All PPh 22 features working correctly: default rate management, per-date custom rates (auto %), manual amounts (Rp), reset functionality, validations, Excel export with PPh columns, and UI components. Health endpoint verified. All regression items passed.",
+  "backend_issues": {
+    "critical_bugs": [],
+    "flaky_endpoints": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "Health endpoint GET /api/ returns status ok + database connected (no auth required)",
+    "Login admin utama (yumaclovstar@gmail.com) and admin cadangan (admin@ptsjm.co.id)",
+    "GET /api/settings/pph returns default rate 0.25% and system_default 0.25%",
+    "PUT /api/settings/pph changes default rate (admin only, affects all auto mode dates)",
+    "POST /api/finance/pph auto mode with custom rate_pct (e.g., 1.5%) - pph22 calculated correctly, pph_custom=true",
+    "POST /api/finance/pph manual mode with amount - pph22 = exact amount, pph_mode='manual', effective rate calculated",
+    "Validation: amount > harga_jual returns 400",
+    "Validation: negative amount returns 400",
+    "Validation: rate_pct > 100 returns 400",
+    "Validation: invalid mode returns 400",
+    "Validation: ungraded date returns 400",
+    "Validation: negative default rate returns 400",
+    "Validation: default rate > 100 returns 400",
+    "DELETE /api/finance/pph/{date} resets to default (pph_custom=false, pph_mode='auto')",
+    "DELETE non-existent date returns 404",
+    "Anonymous/non-admin cannot change default rate (401/403)",
+    "Excel export /api/export/finance-excel contains 'PPh 22' and 'Tarif / Mode PPh' columns",
+    "Excel shows manual mode as 'Manual · x% efektif' with note",
+    "Finance summary totals include pph_rate_default, pph_effective_pct, pph_manual_days",
+    "UI: PPh setting form visible for admin only (data-testid: pph-setting-form, pph-default-rate-input, pph-default-save-button)",
+    "UI: PPh 22 column in finance table with badge ('Otomatis x%' / 'Manual · x% efektif')",
+    "UI: Edit PPh button (data-testid: edit-pph-{date}) opens modal",
+    "UI: PPh modal (data-testid: pph-modal) with mode switch (pph-mode-auto / pph-mode-manual)",
+    "UI: Auto mode shows rate input (pph-rate-input), manual mode shows amount input (pph-amount-input)",
+    "UI: Note input (pph-note-input) and preview (pph-preview) update correctly",
+    "UI: Save button (pph-save-button) and reset button (pph-reset-button) functional",
+    "Regression: GET /api/transactions returns all transactions",
+    "Regression: GET /api/owners returns all owners",
+    "Regression: GET /api/prices returns prices",
+    "Regression: GET /api/analytics/summary returns correct totals",
+    "Regression: All Excel exports working (complete, owners, daily, finance, prices)",
+    "Regression: Transaction table scrollable",
+    "Regression: Generator button accessible",
+    "Regression: Price CRUD operations",
+    "Regression: Owner management",
+    "Regression: Batch management (create, activate, delete)",
+    "Regression: Admin approval tab accessible"
+  ],
+  "test_report_links": [
+    "/app/backend_test_pph_comprehensive.py",
+    "/app/backend/tests/test_pph.py"
+  ],
+  "action_item_for_main_agent": "",
+  "updated_files": [
+    "/app/backend_test_pph_comprehensive.py"
+  ],
+  "success_percentage": {
+    "backend": "100% (34/34 tests passed)",
+    "frontend": "100% (all UI components and interactions verified)",
+    "excel_export": "100% (PPh columns present and correct)",
+    "regression": "100% (all features working)"
+  },
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_test_itself": false,
+  "detailed_notes": {
+    "pph_feature_verification": {
+      "default_rate_management": "✅ GET/PUT /api/settings/pph working, admin-only access enforced",
+      "per_date_custom_rate": "✅ Auto mode with custom rate_pct working, marked as pph_custom=true",
+      "manual_amount": "✅ Manual mode with exact amount working, effective rate calculated",
+      "reset_functionality": "✅ DELETE endpoint resets to default correctly",
+      "validations": "✅ All edge cases validated (amount > harga_jual, negative, rate > 100, invalid mode, ungraded date)",
+      "excel_export": "✅ PPh 22 and Tarif/Mode columns present in Laba Rugi sheet",
+      "ui_components": "✅ Admin setting form, table column with badge, edit modal with mode switch, preview updates"
+    },
+    "health_endpoint": "✅ GET /api/ returns {status: 'ok', service: 'PT SJM Sawit API', database: 'connected', time: ISO timestamp}",
+    "regression_verification": {
+      "authentication": "✅ Both admin accounts working (utama & cadangan)",
+      "transactions": "✅ CRUD operations, generator, delete by date",
+      "finance": "✅ Grading, summary, totals calculation",
+      "prices": "✅ CRUD, month navigation, trend display",
+      "owners": "✅ List, create, update",
+      "batches": "✅ Create, activate, delete",
+      "exports": "✅ All Excel exports (complete, owners, daily, finance, prices)",
+      "admin": "✅ User approval tab accessible"
+    },
+    "test_environment": {
+      "database_state": "Clean (0 transactions after cleanup)",
+      "test_data_generated": "12 transactions via generator for testing",
+      "cleanup_performed": "✅ qa_cleanup.py run before and after testing",
+      "default_rate_restored": "✅ 0.25% confirmed after testing"
+    }
+  }
+}

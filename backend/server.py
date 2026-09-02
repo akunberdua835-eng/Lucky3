@@ -24,6 +24,9 @@ ADMIN_PASSWORD = os.environ['ADMIN_PASSWORD']
 JWT_SECRET = os.environ['JWT_SECRET']
 ADMIN_NOTIFY = ADMIN_EMAIL
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+BACKUP_ADMINS = [e.strip().lower() for e in os.environ.get('BACKUP_ADMIN_EMAILS', '').split(',') if e.strip()]
+PROTECTED_EMAILS = [ADMIN_EMAIL] + BACKUP_ADMINS
+import excel_reports as xr
 
 def now(): return datetime.now(timezone.utc).isoformat()
 def hash_pw(value): return bcrypt.hashpw(value.encode(), bcrypt.gensalt()).decode()
@@ -74,7 +77,7 @@ async def admin_user(user=Depends(current_user)):
 class Signup(BaseModel): name: str; email: str; password: str = Field(min_length=6)
 class Login(BaseModel): email: str; password: str
 class Owner(BaseModel): id: Optional[str]=None; name: str; vehicle_type: str; capacity_kg: int; active: bool=True
-class Price(BaseModel): date: str; price_per_kg: int
+class Price(BaseModel): date: str; price_per_kg: int; note: Optional[str]=None
 class Tx(BaseModel):
     id: Optional[str]=None; batch_id: str; date: str; arrival_time: str; exit_time: str
     owner_id: str; owner_name: str; vehicle_type: str; gross_kg: int; tare_kg: Optional[int]=None
@@ -82,6 +85,8 @@ class Tx(BaseModel):
 class Generate(BaseModel): start_date: str; end_date: str; target_kg: int; price_per_kg: int=3000
 class NewBatch(BaseModel): month: Optional[str]=None
 class FinanceDay(BaseModel): date: str; total_tare_kg: int; sip_price_per_kg: int; freight_per_kg: int=200; batch_id: Optional[str]=None
+class PphSetting(BaseModel): rate_pct: float
+class PphOverride(BaseModel): date: str; batch_id: Optional[str]=None; mode: str='auto'; rate_pct: Optional[float]=None; amount: Optional[int]=None; note: Optional[str]=None
 
 @app.on_event('startup')
 async def startup():
@@ -92,12 +97,25 @@ async def startup():
         await db.users.insert_one({'id':str(uuid.uuid4()),'name':'Admin Utama PT SJM','email':ADMIN_EMAIL,'password_hash':hash_pw(ADMIN_PASSWORD),'role':'admin','status':'approved','created_at':now()})
     elif not check_pw(ADMIN_PASSWORD, admin.get('password_hash','')):
         await db.users.update_one({'email':ADMIN_EMAIL},{'$set':{'password_hash':hash_pw(ADMIN_PASSWORD),'role':'admin','status':'approved'}})
+    else:
+        await db.users.update_one({'email':ADMIN_EMAIL},{'$set':{'role':'admin','status':'approved'}})
+    for be in BACKUP_ADMINS:
+        await db.users.update_one({'email':be},{'$set':{'role':'admin','status':'approved'}})
     active = await db.batches.find_one({'active':True})
     if not active:
         m=datetime.now().strftime('%Y-%m')
         await db.batches.insert_one({'id':f'BATCH-{m}', 'label':month_label(m), 'month':m, 'active':True, 'created_at':now()})
     if await db.owners.count_documents({}) == 0:
         await db.owners.insert_many([{'id':str(uuid.uuid4()),'name':'Ita Sari','vehicle_type':'Pick Up','capacity_kg':1300,'active':True},{'id':str(uuid.uuid4()),'name':'Epit','vehicle_type':'Tossa','capacity_kg':600,'active':True},{'id':str(uuid.uuid4()),'name':'Sita Rosiani','vehicle_type':'Hilux','capacity_kg':1800,'active':True},{'id':str(uuid.uuid4()),'name':'Suparmin','vehicle_type':'Hilux','capacity_kg':1800,'active':True}])
+
+@api.get('/')
+async def health():
+    """Health check untuk Railway/Render/Vercel (tidak butuh autentikasi)."""
+    try:
+        await db.command('ping'); dbok=True
+    except Exception:
+        dbok=False
+    return {'status':'ok' if dbok else 'degraded','service':'PT SJM Sawit API','database':'connected' if dbok else 'unreachable','time':now()}
 
 @api.post('/auth/signup')
 async def signup(p: Signup):
@@ -171,10 +189,45 @@ async def owners(user=Depends(current_user)): return await db.owners.find({}, {'
 @api.post('/owners')
 async def save_owner(p: Owner, user=Depends(current_user)):
     d=p.model_dump(); d['id']=d.get('id') or str(uuid.uuid4()); await db.owners.update_one({'id':d['id']},{'$set':d},upsert=True); return d
+def price_rows(docs):
+    """Urut naik + hitung naik/turun terhadap tanggal tercatat sebelumnya."""
+    rows=[]; prev=None
+    for d in sorted(docs,key=lambda x:x['date']):
+        r={'date':d['date'],'price_per_kg':d['price_per_kg'],'note':d.get('note') or '','updated_at':d.get('updated_at')}
+        if prev is None: r['change']=None; r['change_pct']=None; r['trend']='awal'
+        else:
+            ch=d['price_per_kg']-prev
+            r['change']=ch; r['change_pct']=round(ch/prev*100,2) if prev else 0
+            r['trend']='naik' if ch>0 else 'turun' if ch<0 else 'tetap'
+        prev=d['price_per_kg']; rows.append(r)
+    return rows
+
 @api.get('/prices')
-async def prices(user=Depends(current_user)): return await db.prices.find({}, {'_id':0}).sort('date',-1).to_list(400)
+async def prices(month:Optional[str]=None,user=Depends(current_user)):
+    q={'date':{'$regex':f'^{month}'}} if month else {}
+    docs=await db.prices.find(q,{'_id':0}).to_list(1000)
+    rows=price_rows(docs)
+    vals=[r['price_per_kg'] for r in rows]
+    stats={'count':len(rows),'high':max(vals) if vals else 0,'low':min(vals) if vals else 0,
+           'avg':round(sum(vals)/len(vals)) if vals else 0,'last':vals[-1] if vals else 0,
+           'first':vals[0] if vals else 0,
+           'change_total':(vals[-1]-vals[0]) if len(vals)>1 else 0,
+           'month':month or ''}
+    return {'month':month or '','prices':rows,'stats':stats}
+
 @api.post('/prices')
-async def save_price(p: Price, user=Depends(current_user)): d=p.model_dump(); await db.prices.update_one({'date':p.date},{'$set':d},upsert=True); return d
+async def save_price(p: Price, user=Depends(current_user)):
+    if p.price_per_kg<=0: raise HTTPException(400,'Harga per Kg harus lebih dari 0.')
+    if len(p.date or '')!=10: raise HTTPException(400,'Tanggal tidak valid.')
+    d={'date':p.date,'price_per_kg':p.price_per_kg,'note':(p.note or '').strip(),'updated_at':now()}
+    await db.prices.update_one({'date':p.date},{'$set':d},upsert=True)
+    return d
+
+@api.delete('/prices/{date}')
+async def delete_price(date,user=Depends(current_user)):
+    r=await db.prices.delete_one({'date':date})
+    if not r.deleted_count: raise HTTPException(404,'Harga tanggal tersebut tidak ditemukan.')
+    return {'success':True}
 
 def validate_tx(d, owners):
     owner=next((o for o in owners if o['id']==d['owner_id']),None)
@@ -285,6 +338,77 @@ async def finance_day(p:FinanceDay,user=Depends(current_user)):
     await db.finance_days.update_one({'batch_id':batch_id,'date':p.date},{'$set':doc},upsert=True)
     return {'success':True,'date':p.date,'total_tare_kg':p.total_tare_kg,'distributed':len(txs)}
 
+PPH_DEFAULT=0.25
+
+async def pph_default_rate():
+    s=await db.settings.find_one({'key':'pph'})
+    try: return float(s['rate_pct']) if s and s.get('rate_pct') is not None else PPH_DEFAULT
+    except (TypeError,ValueError): return PPH_DEFAULT
+
+def calc_pph(hjual,f,default_rate):
+    """PPh 22 bisa otomatis (persen) atau manual (nominal hasil akhir yang dikelola user)."""
+    mode=(f.get('pph_mode') or 'auto')
+    if mode=='manual' and f.get('pph22_manual') is not None:
+        pph=int(f['pph22_manual']); rate=round(pph/hjual*100,4) if hjual else 0
+        return pph,'manual',rate,True
+    rate=f.get('pph_rate_pct')
+    custom=rate is not None
+    rate=default_rate if rate is None else float(rate)
+    return round(hjual*rate/100),'auto',rate,custom
+
+@api.get('/settings/pph')
+async def get_pph(user=Depends(current_user)):
+    return {'rate_pct':await pph_default_rate(),'system_default':PPH_DEFAULT}
+
+@api.put('/settings/pph')
+async def set_pph(p:PphSetting,user=Depends(admin_user)):
+    if not (0<=p.rate_pct<=100): raise HTTPException(400,'Tarif PPh 22 harus antara 0% dan 100%.')
+    await db.settings.update_one({'key':'pph'},{'$set':{'key':'pph','rate_pct':float(p.rate_pct),'updated_at':now()}},upsert=True)
+    await notify('Tarif PPh 22 diubah PT SJM',f'<p>Tarif PPh 22 default diubah menjadi {p.rate_pct}%.</p>')
+    return {'rate_pct':float(p.rate_pct)}
+
+async def _day_harga_jual(batch_id,date,f):
+    txs=await db.transactions.find({'batch_id':batch_id,'date':date},{'_id':0}).to_list(1000)
+    netto=sum(t['netto_kg'] for t in txs)
+    return (netto-f['total_tare_kg'])*f['sip_price_per_kg']
+
+@api.post('/finance/pph')
+async def set_day_pph(p:PphOverride,user=Depends(current_user)):
+    """Kelola PPh 22 per tanggal: otomatis dari tarif % atau nominal manual dari hasil akhir."""
+    batch_id=p.batch_id
+    if not batch_id:
+        b=await db.batches.find_one({'active':True}); batch_id=b['id'] if b else None
+    f=await db.finance_days.find_one({'batch_id':batch_id,'date':p.date},{'_id':0})
+    if not f: raise HTTPException(400,'Tanggal tersebut belum digrading. Isi grading harian dulu sebelum mengatur PPh 22.')
+    if p.mode not in ('auto','manual'): raise HTTPException(400,'Mode PPh 22 harus auto atau manual.')
+    hjual=await _day_harga_jual(batch_id,p.date,f)
+    upd={'pph_mode':p.mode,'pph_note':(p.note or '').strip(),'updated_at':now()}
+    unset={}
+    if p.mode=='manual':
+        if p.amount is None or p.amount<0: raise HTTPException(400,'Nominal PPh 22 harus 0 atau lebih.')
+        if p.amount>hjual: raise HTTPException(400,f'Nominal PPh 22 tidak boleh melebihi harga jual hari itu (Rp {hjual:,}).'.replace(',','.'))
+        upd['pph22_manual']=int(p.amount)
+    else:
+        unset['pph22_manual']=''
+        if p.rate_pct is None: unset['pph_rate_pct']=''
+        elif not (0<=p.rate_pct<=100): raise HTTPException(400,'Tarif PPh 22 harus antara 0% dan 100%.')
+        else: upd['pph_rate_pct']=float(p.rate_pct)
+    ops={'$set':upd}
+    if unset: ops['$unset']=unset
+    await db.finance_days.update_one({'batch_id':batch_id,'date':p.date},ops)
+    f2=await db.finance_days.find_one({'batch_id':batch_id,'date':p.date},{'_id':0})
+    pph,mode,rate,custom=calc_pph(hjual,f2,await pph_default_rate())
+    return {'success':True,'date':p.date,'harga_jual':hjual,'pph22':pph,'pph_mode':mode,'pph_rate_pct':rate,'pph_custom':custom,'pph_note':f2.get('pph_note','')}
+
+@api.delete('/finance/pph/{date}')
+async def reset_day_pph(date,batch_id:Optional[str]=None,user=Depends(current_user)):
+    if not batch_id:
+        b=await db.batches.find_one({'active':True}); batch_id=b['id'] if b else None
+    f=await db.finance_days.find_one({'batch_id':batch_id,'date':date})
+    if not f: raise HTTPException(404,'Konfigurasi finance tanggal tersebut tidak ditemukan.')
+    await db.finance_days.update_one({'batch_id':batch_id,'date':date},{'$unset':{'pph_mode':'','pph_rate_pct':'','pph22_manual':'','pph_note':''},'$set':{'updated_at':now()}})
+    return {'success':True,'date':date,'rate_pct':await pph_default_rate()}
+
 @api.get('/finance/summary')
 async def finance_summary(batch_id:Optional[str]=None,start:Optional[str]=None,end:Optional[str]=None,user=Depends(current_user)):
     if not batch_id:
@@ -293,6 +417,7 @@ async def finance_summary(batch_id:Optional[str]=None,start:Optional[str]=None,e
     if start or end: q['date']={}; q['date'].update({'$gte':start} if start else {}); q['date'].update({'$lte':end} if end else {})
     txs=await db.transactions.find(q,{'_id':0}).to_list(10000)
     fdays={f['date']:f for f in await db.finance_days.find({'batch_id':batch_id},{'_id':0}).to_list(1000)}
+    default_rate=await pph_default_rate()
     days={}
     for t in txs: days.setdefault(t['date'],[]).append(t)
     rows=[]; detail=[]
@@ -302,8 +427,10 @@ async def finance_summary(batch_id:Optional[str]=None,start:Optional[str]=None,e
         rate=f['freight_per_kg'] if f else 200; angkut=netto*rate; modal=beli+angkut
         row={'date':date,'tx_count':len(dtx),'netto_kg':netto,'total_beli':beli,'freight_per_kg':rate,'total_angkut':angkut,'total_modal':modal,'configured':bool(f)}
         if f:
-            tare=f['total_tare_kg']; njual=netto-tare; hjual=njual*f['sip_price_per_kg']; pph=round(hjual*0.0025); untung=hjual-pph-modal
-            row.update({'total_tare_kg':tare,'grading_pct':round(tare/netto*100,2),'netto_jual':njual,'sip_price_per_kg':f['sip_price_per_kg'],'harga_jual':hjual,'pph22':pph,'untung_rugi':untung})
+            tare=f['total_tare_kg']; njual=netto-tare; hjual=njual*f['sip_price_per_kg']
+            pph,pmode,prate,pcustom=calc_pph(hjual,f,default_rate); untung=hjual-pph-modal
+            row.update({'total_tare_kg':tare,'grading_pct':round(tare/netto*100,2),'netto_jual':njual,'sip_price_per_kg':f['sip_price_per_kg'],'harga_jual':hjual,'pph22':pph,'untung_rugi':untung,
+                        'pph_mode':pmode,'pph_rate_pct':prate,'pph_custom':pcustom,'pph_note':f.get('pph_note','')})
         rows.append(row)
         for t in dtx:
             g=t.get('grading_tare_kg')
@@ -313,6 +440,11 @@ async def finance_summary(batch_id:Optional[str]=None,start:Optional[str]=None,e
             detail.append(d)
     conf=[r for r in rows if r['configured']]
     totals={'netto_kg':sum(r['netto_kg'] for r in rows),'total_beli':sum(r['total_beli'] for r in rows),'total_angkut':sum(r['total_angkut'] for r in rows),'total_modal':sum(r['total_modal'] for r in rows),'total_tare_kg':sum(r.get('total_tare_kg',0) for r in conf),'netto_jual':sum(r.get('netto_jual',0) for r in conf),'harga_jual':sum(r.get('harga_jual',0) for r in conf),'pph22':sum(r.get('pph22',0) for r in conf),'untung_rugi':sum(r.get('untung_rugi',0) for r in conf),'configured_days':len(conf),'total_days':len(rows)}
+    hj=totals['harga_jual']
+    totals['pph_rate_default']=default_rate
+    totals['pph_effective_pct']=round(totals['pph22']/hj*100,4) if hj else 0
+    totals['pph_manual_days']=len([r for r in conf if r.get('pph_mode')=='manual'])
+    totals['pph_custom_days']=len([r for r in conf if r.get('pph_custom')])
     return {'days':rows,'totals':totals,'transactions':detail}
 
 @api.get('/analytics/summary')
@@ -325,33 +457,56 @@ async def summary(batch_id:Optional[str]=None,start:Optional[str]=None,end:Optio
     for t in txs:
         for target,key in ((daily,t['date']),(by_owner,t['owner_name'])): target.setdefault(key,{'label':key,'count':0,'netto_kg':0,'total_amount':0}); target[key]['count']+=1; target[key]['netto_kg']+=t['netto_kg']; target[key]['total_amount']+=t['total_amount']
     return {'total_transactions':len(txs),'total_netto_kg':sum(t['netto_kg'] for t in txs),'total_netto_ton':round(sum(t['netto_kg'] for t in txs)/1000,2),'total_spending':sum(t['total_amount'] for t in txs),'daily_summary':list(daily.values()),'owner_summary':list(by_owner.values()),'transactions':txs}
+def xlsx(stream,filename):
+    return StreamingResponse(stream,media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition':f'attachment; filename={filename}','Access-Control-Expose-Headers':'Content-Disposition'})
+
+async def _report_data(batch_id,start,end,user):
+    s=await summary(batch_id,start,end,user=user)
+    txs=s['transactions']
+    periode=xr.periode_label(start,end,[t['date'] for t in txs])
+    return txs,periode
+
 @api.get('/export/excel')
 async def export(batch_id:Optional[str]=None,start:Optional[str]=None,end:Optional[str]=None,user=Depends(current_user)):
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
-    from openpyxl.utils import get_column_letter
-    s=await summary(batch_id,start,end,user=user)
-    wb=Workbook(); ws=wb.active; ws.title='Rekap PT SJM'
-    heads=['Kode','Tanggal','Jam Terima','Jam Keluar','Pemilik','Kendaraan','Gross Kg','Tare Kg','Netto Kg','Netto Ton','Harga/Kg','Total Beli']
-    ws.append(heads)
-    for c in ws[1]: c.font=Font(bold=True,color='FFFFFF'); c.fill=PatternFill('solid',fgColor='15803D'); c.alignment=Alignment(horizontal='center')
-    txs=sorted(s['transactions'],key=lambda t:(t['date'],t['arrival_time']))
-    for r,t in enumerate(txs,start=2):
-        ws.append([t['transaction_code'],t['date'],t['arrival_time'],t['exit_time'],t['owner_name'],t['vehicle_type'],t['gross_kg'],t.get('tare_kg') or 0,f'=G{r}-H{r}',f'=ROUND((G{r}-H{r})/1000,2)',t['price_per_kg'],f'=(G{r}-H{r})*K{r}'])
-    last=len(txs)+1
-    if txs:
-        ws.append(['TOTAL','','','','','',f'=SUM(G2:G{last})',f'=SUM(H2:H{last})',f'=SUM(I2:I{last})',f'=SUM(J2:J{last})','',f'=SUM(L2:L{last})'])
-        for c in ws[last+1]: c.font=Font(bold=True); c.fill=PatternFill('solid',fgColor='E9F5ED')
-    for i,w in enumerate([16,12,11,11,17,12,10,9,10,11,11,15],1): ws.column_dimensions[get_column_letter(i)].width=w
-    ws.freeze_panes='A2'
-    out=io.BytesIO(); wb.save(out); out.seek(0)
-    return StreamingResponse(out,media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename=Rekap_PT_SJM.xlsx'})
+    """Satu file lengkap: buku penerimaan, rekap pemilik (+sheet per orang), rekap harian, laba rugi, harga."""
+    txs,periode=await _report_data(batch_id,start,end,user)
+    fin=await finance_summary(batch_id,start,end,user=user)
+    pr=price_rows(await db.prices.find({},{'_id':0}).to_list(1000))
+    return xlsx(xr.wb_full(txs,fin,pr,periode),'Laporan_Lengkap_PT_SJM.xlsx')
+
+@api.get('/export/owners-excel')
+async def export_owners(batch_id:Optional[str]=None,start:Optional[str]=None,end:Optional[str]=None,owner:Optional[str]=None,user=Depends(current_user)):
+    """Rekap per pemilik. Tanpa ?owner= -> ringkasan + sheet per orang. Dengan ?owner= -> 1 sheet nama orang tsb."""
+    txs,periode=await _report_data(batch_id,start,end,user)
+    if owner:
+        if not any(t['owner_name']==owner for t in txs): raise HTTPException(404,f'Tidak ada transaksi untuk pemilik {owner} pada periode ini.')
+        name=''.join(ch if ch.isalnum() else '_' for ch in owner)
+        return xlsx(xr.wb_owners(txs,periode,owner),f'Rekap_Pemilik_{name}_PT_SJM.xlsx')
+    return xlsx(xr.wb_owners(txs,periode),'Rekap_Per_Pemilik_PT_SJM.xlsx')
+
+@api.get('/export/daily-excel')
+async def export_daily(batch_id:Optional[str]=None,start:Optional[str]=None,end:Optional[str]=None,user=Depends(current_user)):
+    txs,periode=await _report_data(batch_id,start,end,user)
+    return xlsx(xr.wb_daily(txs,periode),'Rekap_Muatan_Harian_PT_SJM.xlsx')
+
+@api.get('/export/finance-excel')
+async def export_finance(batch_id:Optional[str]=None,start:Optional[str]=None,end:Optional[str]=None,user=Depends(current_user)):
+    fin=await finance_summary(batch_id,start,end,user=user)
+    periode=xr.periode_label(start,end,[d['date'] for d in fin['days']])
+    return xlsx(xr.wb_finance(fin,periode),'Laba_Rugi_PT_SJM.xlsx')
+
+@api.get('/export/prices-excel')
+async def export_prices(month:Optional[str]=None,user=Depends(current_user)):
+    q={'date':{'$regex':f'^{month}'}} if month else {}
+    pr=price_rows(await db.prices.find(q,{'_id':0}).to_list(1000))
+    return xlsx(xr.wb_prices(pr,month),f'Harga_Per_Kg_{month or "Semua"}_PT_SJM.xlsx')
 @api.get('/admin/users')
 async def admin_users(user=Depends(admin_user)): return await db.users.find({}, {'_id':0,'password_hash':0}).to_list(1000)
 @api.post('/admin/users/{uid}/approve')
 async def approve(uid,user=Depends(admin_user)): r=await db.users.update_one({'id':uid},{'$set':{'status':'approved'}}); return {'success':r.modified_count>0}
 @api.delete('/admin/users/{uid}')
-async def remove_user(uid,user=Depends(admin_user)): await db.users.delete_one({'id':uid,'email':{'$ne':ADMIN_EMAIL}}); return {'success':True}
+async def remove_user(uid,user=Depends(admin_user)): await db.users.delete_one({'id':uid,'email':{'$nin':PROTECTED_EMAILS}}); return {'success':True}
 app.include_router(api)
 app.add_middleware(CORSMiddleware,allow_origins=[o.strip() for o in os.environ.get('CORS_ORIGINS','*').split(',')],allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
 @app.on_event('shutdown')

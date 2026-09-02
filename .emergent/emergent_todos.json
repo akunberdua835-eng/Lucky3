@@ -1,0 +1,22 @@
+[
+  {
+    "content": "Phase 4: Backend PPh 22 dikelola — tarif default global, tarif khusus per tanggal, nominal manual, reset + Excel kolom Tarif/Mode",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 4: Frontend — pengaturan tarif default (admin), modal Kelola PPh 22 per tanggal dengan preview untung/rugi, badge mode",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 4: pytest tests/test_pph.py (8 test) + suite penuh 59 passed",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 4: File deploy mandiri — vercel.json, Dockerfile, Procfile, render.yaml, railway.json, .env.example, DEPLOY.md, script migrasi Atlas, health endpoint /api/",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 4: End to End Testing PPh 22 + regresi via testing agent (100% pass)",
+    "status": "completed"
+  }
+]

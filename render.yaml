@@ -1,0 +1,30 @@
+# Blueprint Render.com — backend FastAPI PT SJM Sawit (free plan)
+# Cara pakai: Render Dashboard -> New -> Blueprint -> pilih repo ini.
+services:
+  - type: web
+    name: ptsjm-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: MONGO_URL
+        sync: false        # isi manual: connection string MongoDB Atlas
+      - key: DB_NAME
+        value: ptsjm_sawit
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false        # yumaclovstar@gmail.com
+      - key: ADMIN_PASSWORD
+        sync: false        # password admin Anda
+      - key: BACKUP_ADMIN_EMAILS
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false        # https://nama-app-anda.vercel.app
+      - key: RESEND_API_KEY
+        sync: false        # opsional, untuk notifikasi email
