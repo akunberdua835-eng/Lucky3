@@ -87,3 +87,7 @@ credentials.json
 *.key
 .credentials
 frontend/node_modules/.cache/default-development/0.pack
+
+# Contoh env (aman di-commit, tidak berisi rahasia)
+!.env.example
+!*.env.example
