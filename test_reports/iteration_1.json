@@ -1,0 +1,75 @@
+{
+  "summary": "Full backend + E2E frontend regression of PT SJM sawit app. Created pytest suite (27 tests, 25 pass = 92.6%) covering auth/signup-approval/reject, owners master, transaction CRUD + all validations, generator atomicity & schedule rules, analytics filters, Excel formula export, batch archiving. Ran 4 Playwright E2E flows on the public URL: signup->pending->approve->login->reject, owners add/edit, manual transaction add/edit/delete + validations, voucher preview/print, delete-by-date isolation, generator (infeasible detail toast + exact 6450 Kg), dashboard date filter, Excel download, New-bulan batch archive + batch switching. Two real backend defects found: duplicate transaction_code after a delete, and no brute-force lockout (playbook requirement). DB restored to clean seed state (admin + 4 seed owners, 0 transactions, BATCH-2026-09 active).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/transactions", "issue": "transaction_code is generated from count_documents(batch) + 1, so after deleting a transaction the next insert re-uses an existing code. Reproduced: create 2 tx (…-001, …-002), delete …-001, next create returns …-002 (duplicate). Codes are printed on the weighbridge voucher, so duplicates are a finance/audit defect. Use a monotonic counter per batch/month (findAndModify sequence) or max(existing seq)+1.", "priority": "HIGH"},
+      {"endpoint": "POST /api/auth/login", "issue": "No brute-force protection: 6+ consecutive wrong passwords all return 401 with no lockout/throttle (playbook requires lockout after 5 fails, expected 423/429).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "startup/seed_admin", "issue": "Admin email+password are hardcoded in server.py (ADMIN_PASSWORD='178910') and the seed only inserts when missing - it never re-syncs the password hash of an existing admin, so changing the constant has no effect (playbook item 5 not implemented). Move to env vars and update the hash on startup when it differs."},
+      {"endpoint": "JWT config", "issue": "JWT_SECRET is not present in backend/.env, so secrets.token_hex(32) is regenerated on every backend restart -> every issued token becomes invalid and all users are silently logged out after a restart/deploy. Persist JWT_SECRET in .env."},
+      {"endpoint": "CORS / session", "issue": "CORS_ORIGINS='*' combined with allow_credentials=True is an invalid CORS combination for credentialed requests; and auth uses a localStorage Bearer token instead of the httpOnly cookie the auth playbook asks for (XSS token theft risk)."},
+      {"endpoint": "DELETE /api/transactions/date/{date}", "issue": "batch_id is taken from the query string without checking it is the ACTIVE batch, so transactions inside an archived batch can be mass-deleted (spec says the operation is limited to the active batch)."},
+      {"endpoint": "DELETE /api/admin/users/{uid} & POST /api/admin/users/{uid}/approve", "issue": "delete returns {success:true} even when nothing was deleted (protected admin) and approve returns {success:false} when the user was already approved - misleading response semantics for the UI toast."},
+      {"endpoint": "POST /api/owners", "issue": "No DELETE endpoint for owners - test/incorrect master rows can never be removed (only the active flag). Upsert also allows unlimited duplicate names."},
+      {"endpoint": "notify() (Resend)", "issue": "Currently mocked, but when RESEND_API_KEY is set the synchronous resend SDK call is awaited inline in login / save_tx / delete_day, blocking the event loop on every request. Move to a background task/executor with a timeout."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Header (Toaster overlay)", "issue": "Sonner toasts render top-right on top of the batch selector and the 'New bulan' button; generator error toasts last 9s and fully cover both controls, blocking interaction. Offset the toaster or move header actions.", "selector": "[data-testid=\"batch-selector-dropdown\"], [data-testid=\"new-batch-button\"]", "priority": "MEDIUM"},
+      {"component": "Batch selector", "issue": "Every batch created by 'New bulan' is labelled with the current month, so multiple batches show the identical text 'September 2026 · Arsip' and cannot be told apart (only the hidden id differs). Label with period/sequence or creation date.", "selector": "[data-testid=\"batch-selector-dropdown\"]", "priority": "MEDIUM"},
+      {"component": "App data loading", "issue": "load()/refresh()/loadUsers() have no catch and no loading/empty-error state; an API failure produces an unhandled promise rejection and a silently blank dashboard (no error UI, no retry).", "selector": "n/a", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Generator success toast", "issue": "After a feasible run the success toast could not be found in the DOM ~4.5s after submit while the previous 9s error toast was still visible; the data itself was written correctly (5 rows, exact 6.450 Kg) and the modal closed. Likely toast stacking/timing - verify the success toast is not hidden behind the long-lived error toast.", "affected_selectors": ["[data-testid=\"run-generator-button\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Dashboard filter bar", "issues": ["Native browser date inputs are used (render as US mm/dd/yyyy) in an Indonesian app instead of a localized/shadcn calendar - inconsistent with dd/mm/yyyy shown everywhere else", "The two date inputs are unlabeled and separated by a very large empty gap, so it is unclear which is start and which is end", "Same native picker issue on delete-day-date-input and tx-date-input"]},
+      {"screen": "Owners cards", "issues": ["Edit pencil sits alone on a second row at the bottom-left of each card, visually detached from the card content"]},
+      {"screen": "Dashboard charts (empty batch)", "issues": ["When a batch has no transactions the two charts render as empty axes boxes with no 'no data' message"]},
+      {"screen": "Login page", "issues": ["Left brand panel has a very large vertical empty area between the headline and the 07:00-16:00 stamp on 1080p"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_tx_code.py",
+    "/app/backend/tests/qa_cleanup.py",
+    "/app/backend/tests/inspect_db.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix duplicate transaction_code generation after deletes (use a persistent per-batch sequence, not count_documents).",
+    "Add brute-force lockout/throttling on POST /api/auth/login (lock after 5 failures) per the auth playbook.",
+    "Persist JWT_SECRET in backend/.env so restarts do not invalidate all sessions; move admin email/password to env and re-sync the admin hash on startup.",
+    "Set explicit CORS origins (not '*') when allow_credentials=True; consider httpOnly cookie session as the playbook requires.",
+    "Restrict DELETE /api/transactions/date/{date} to the active batch.",
+    "Give each batch a unique human label so archived batches are distinguishable in batch-selector-dropdown.",
+    "Move the Toaster so it does not cover batch-selector-dropdown / new-batch-button.",
+    "Add error/loading states (and .catch) to load()/refresh() in App.js; replace native date inputs with the localized/shadcn date picker."
+  ],
+  "critical_code_review_comments": [
+    "server.py:130 - transaction_code derived from count_documents is not collision-safe; also the whole save_tx body is a single 700+ char line, making it unreviewable/untestable.",
+    "server.py:23 - JWT_SECRET falls back to a random value; sessions break on every restart.",
+    "server.py:21-22 - credentials hardcoded in source instead of env vars.",
+    "server.py:133 - delete_day trusts the client-supplied batch_id, allowing mass deletion inside archived batches.",
+    "server.py:33-43 - notify() executes a blocking third-party SDK call inside async request handlers.",
+    "App.js - entire app in one file with extremely long single-line JSX components; no .catch/loading states around API calls."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_tx_code.py",
+    "/app/backend/tests/qa_cleanup.py",
+    "/app/backend/tests/inspect_db.py",
+    "/app/test_reports/iteration_1.json"
+  ],
+  "success_rate": {"backend": "92.6% (25/27 pytest cases)", "frontend": "97% (32/33 E2E checks; only the generator success-toast assertion failed while the data was correct)"},
+  "seed_data_creation": "Temporary data only: TEST_QA owners, transactions on 2026-07-31/08-01/10-15/11-03/11-04/11-10/11-20/11-25/11-26, test signup accounts test_qa_*@example.com, and extra batches from New-bulan tests. ALL removed by /app/backend/tests/qa_cleanup.py - DB verified back to: admin only, 4 seed owners, 0 transactions, single active BATCH-2026-09.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "/app/memory/test_credentials.md - admin Yumaclovstar@gmail.com / 178910 (verified working; bcrypt hash in DB starts with $2b$12$)",
+  "context_for_next_testing_agent": "Suite lives in /app/backend/tests (conftest.py provides admin_client/active_batch/owners_list fixtures). IMPORTANT: run with -n 0 (pytest.ini forces -n 2 loadscope and TestBatches switches the ACTIVE batch, which races with TestGenerator/TestTransactions and produces false failures). After any run execute `python tests/qa_cleanup.py` from /app/backend to restore the seed state (it wipes all transactions, non-seed owners, extra batches, test_qa users). Known open failures: test_brute_force_lockout and test_tx_code::test_code_not_reused_after_delete - both are genuine product gaps, not test bugs. Verified PASSING and needing no re-verification unless code changes: generator atomicity/exactness/schedule rules, Excel formulas (I='=G{r}-H{r}', L='=(G{r}-H{r})*K{r}', TOTAL row SUM), delete-by-date isolation, edit keeps transaction_code, voucher content, approval/reject flow.",
+  "rca_of_the_issue": "Duplicate transaction_code: save_tx builds the sequence as count_documents({batch_id}) + 1. Deleting any transaction lowers the count, so the next insert regenerates an already-used sequence number (reproduced deterministically in test_tx_code.py). Fix by storing a per-batch counter document and using find_one_and_update($inc) or by computing max existing sequence + 1. Brute-force: login has no attempt counter/lockout collection, so credential stuffing is unthrottled."
+}

@@ -1,0 +1,55 @@
+{
+  "summary": "Retest of iteration-1 fixes (FIX-1..FIX-7) on PT SJM sawit app. Backend: 34/34 pytest cases pass (26 existing + 7 new iteration-2 cases in tests/test_fixes_iter2.py + tx-code regression). Verified atomic per-batch transaction_code counter (manual create -> delete -> create, generator block reservation, mixed manual+generator sequences, edit keeps code, batch-wide uniqueness), brute-force lockout (5x401 then 423 with Indonesian message, using a dummy email so admin was never locked; counter resets after a successful login), JWT_SECRET persistence (token issued before `supervisorctl restart backend` still returns 200 on /api/auth/me), explicit CORS origins at app level, unique batch labels ('September 2026 · Periode 2'). Frontend E2E on the public URL: toaster now bottom-right and does not overlap batch-selector/new-batch (measured bounding boxes), unique batch labels in dropdown, 'Belum ada data untuk periode ini.' on both empty charts, generator error toast (infeasible detail) and success toast (exact 6.450 Kg / 5 tx), manual add continues code sequence, edit keeps code, voucher preview, delete-by-date (1 row deleted, other dates untouched), Excel download, error toast 'Gagal memuat transaksi. Coba lagi.' on aborted API with dashboard still rendered, logout. DB restored to seed state via tests/qa_cleanup.py (1 admin, 4 seed owners, 0 tx, single active BATCH-2026-09, counters + login_attempts cleared).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/login", "issue": "Lockout key is ip:email only, so credential stuffing across many emails from one IP is still unthrottled; and locked_until is refreshed on EVERY failed attempt (attempt 1-4 also extend the future lock window), so a single failure at t makes the 5th failure lock from t+15m. Consider an IP-level counter and setting locked_until only when the threshold is reached."},
+      {"endpoint": "db.login_attempts", "issue": "Index on 'identifier' is not unique and the counter is written with a read-then-upsert ($set of count computed in Python), so concurrent failed logins can lose increments or create duplicate docs. Use a unique index + $inc."},
+      {"endpoint": "auth session (playbook item 2)", "issue": "Still a localStorage Bearer token; no httpOnly cookie is set on login (auth playbook requirement). Carried over from iteration 1, unchanged."},
+      {"endpoint": "DELETE /api/transactions/date/{date}", "issue": "Still accepts any client-supplied batch_id (archived batches can be mass-deleted). Carried over from iteration 1, not in this iteration's fix list."},
+      {"endpoint": "db.counters", "issue": "Counter docs (tx-<batch_id>) are never removed when a batch is deleted/archived - harmless but grows; also no DELETE endpoint for owners (carried over)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Modals (Generate/TxForm/OwnerForm)", "issue": "Modals cannot be dismissed with Escape or by clicking the backdrop - only the small X button works. Verified: generator form still open after Escape and after a backdrop click.", "selector": "[data-testid=\"generator-form\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard filter bar / tx form / delete-day", "issues": ["Native browser date inputs still render as mm/dd/yyyy in an Indonesian dd/mm/yyyy app (carried over from iteration 1, not in this fix list)", "The two dashboard date inputs remain unlabeled with a large empty gap between them"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_fixes_iter2.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_tx_code.py",
+    "/app/backend/tests/jwt_restart_check.py",
+    "/app/backend/tests/qa_cleanup.py",
+    "/app/test_reports/pytest/pytest_results_iter2.xml"
+  ],
+  "action_items": [
+    "Optional hardening: make login_attempts increments atomic ($inc + unique index) and set locked_until only when count reaches 5; add an IP-level throttle.",
+    "Optional UX: allow Escape / backdrop click to close modals.",
+    "Still open from iteration 1 (out of this iteration's scope): restrict DELETE /api/transactions/date/{date} to the active batch, httpOnly cookie session, localized date picker."
+  ],
+  "critical_code_review_comments": [
+    "server.py:48 next_seq via find_one_and_update($inc, upsert) is correct and race-safe; generator reserves a block with next_seq(batch, len(cands)) before insert_many - verified sequential + unique.",
+    "server.py:102-112 lockout logic reads the attempt doc then writes an absolute count - not atomic; also refreshes locked_until on every failure.",
+    "server.py:256 CORS now uses explicit origins from env (verified against the app port); the k8s ingress overwrites Access-Control-Allow-Origin with '*' on the public URL, so public-URL header assertions are not meaningful - not an app defect.",
+    "App.js remains a single ~72-line file of extremely long one-line JSX components; load/refresh/loadUsers now have catch+toast, but there is still no loading skeleton or retry affordance."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_fixes_iter2.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/jwt_restart_check.py",
+    "/app/backend/tests/qa_cleanup.py",
+    "/app/test_reports/iteration_2.json"
+  ],
+  "success_rate": {"backend": "100% (34/34 pytest cases)", "frontend": "100% of retested fixes (FIX-1, FIX-5, FIX-6, FIX-7 + regression smoke) pass"},
+  "seed_data_creation": "Only temporary data (TEST_QA transactions on 2026-10-15/10-20/10-21/07-31/08-01/08-05/08-12, one TEST_QA owner, two extra batches, dummy brute-force email records). All removed - DB verified back to: 1 admin, 4 seed owners, 0 transactions, single active BATCH-2026-09, counters + login_attempts cleared.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "/app/memory/test_credentials.md - admin Yumaclovstar@gmail.com / 178910 (works; DB hash prefix $2b$12$; seed_admin now re-syncs the hash from ADMIN_PASSWORD in backend/.env)",
+  "context_for_next_testing_agent": "Run pytest with -n 0 (pytest.ini forces -n 2 loadscope; TestBatches/TestBatchLabels switch the ACTIVE batch and race with other classes). New file tests/test_fixes_iter2.py covers the iteration-2 fixes; tests/jwt_restart_check.py is a standalone script (it restarts the backend, do not run it in parallel with other tests). Always run `python tests/qa_cleanup.py` from /app/backend afterwards - it now also clears db.counters and db.login_attempts. CAUTION: during this run another session was hitting the same preview API concurrently (backend logs show extra generator/delete calls), which produced one false 'delete-by-date deleted 0 rows' result; re-running the flow on an isolated date (2026-08-12) passed. Do not use the admin email for brute-force tests - use a dummy address (lock key is ip:email).",
+  "rca_of_the_issue": "No new product defects. The single failing frontend assertion in the first delete-by-date attempt was environmental: a concurrent client deleted the 2026-08-05/07-31 rows and ran the generator between test steps (confirmed in /var/log/supervisor/backend.out.log). Re-tested on an isolated date -> toast '1 transaksi tanggal 12/08/2026 dihapus' and only that date's row removed."
+}
