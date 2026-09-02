@@ -81,6 +81,7 @@ class Tx(BaseModel):
     price_per_kg: int; note: str=''; transaction_code: Optional[str]=None
 class Generate(BaseModel): start_date: str; end_date: str; target_kg: int; price_per_kg: int=3000
 class NewBatch(BaseModel): month: Optional[str]=None
+class FinanceDay(BaseModel): date: str; total_tare_kg: int; sip_price_per_kg: int; freight_per_kg: int=200; batch_id: Optional[str]=None
 
 @app.on_event('startup')
 async def startup():
@@ -259,6 +260,60 @@ async def generate(p:Generate,user=Depends(current_user)):
     await db.transactions.insert_many([dict(d) for d in cands])
     await notify('Generator PT SJM selesai',f"<p>{len(cands)} transaksi dibuat, total {p.target_kg} Kg ({p.start_date} s/d {p.end_date}).</p>")
     return {'generated_count':len(cands),'target_kg':p.target_kg,'actual_kg':sum(d['gross_kg'] for d in cands),'used_lunch_break':used_lunch,'status':'exact'}
+
+@api.post('/finance/day')
+async def finance_day(p:FinanceDay,user=Depends(current_user)):
+    batch_id=p.batch_id
+    if not batch_id:
+        b=await db.batches.find_one({'active':True}); batch_id=b['id'] if b else None
+    txs=await db.transactions.find({'batch_id':batch_id,'date':p.date},{'_id':0}).sort('arrival_time',1).to_list(1000)
+    if not txs: raise HTTPException(400,'Tidak ada transaksi pada tanggal tersebut.')
+    total_netto=sum(t['netto_kg'] for t in txs)
+    if not (0<=p.total_tare_kg<total_netto): raise HTTPException(400,f'Total tare harus antara 0 dan kurang dari total netto hari itu ({total_netto} Kg).')
+    if p.sip_price_per_kg<=0 or p.freight_per_kg<0: raise HTTPException(400,'Harga PT SIP dan biaya angkut tidak valid.')
+    raw=[p.total_tare_kg*t['netto_kg']/total_netto*random.uniform(.75,1.25) for t in txs]
+    tares=[max(0,min(int(round(r)),t['netto_kg']-1)) for r,t in zip(raw,txs)]
+    diff=p.total_tare_kg-sum(tares); i=0
+    while diff!=0 and i<200000:
+        j=i%len(txs); step=1 if diff>0 else -1
+        if 0<=tares[j]+step<=txs[j]['netto_kg']-1: tares[j]+=step; diff-=step
+        i+=1
+    if diff!=0: raise HTTPException(400,'Distribusi tare gagal. Periksa nilai total tare.')
+    for t,tr in zip(txs,tares):
+        await db.transactions.update_one({'id':t['id']},{'$set':{'grading_tare_kg':tr}})
+    doc={'batch_id':batch_id,'date':p.date,'total_tare_kg':p.total_tare_kg,'sip_price_per_kg':p.sip_price_per_kg,'freight_per_kg':p.freight_per_kg,'updated_at':now()}
+    await db.finance_days.update_one({'batch_id':batch_id,'date':p.date},{'$set':doc},upsert=True)
+    return {'success':True,'date':p.date,'total_tare_kg':p.total_tare_kg,'distributed':len(txs)}
+
+@api.get('/finance/summary')
+async def finance_summary(batch_id:Optional[str]=None,start:Optional[str]=None,end:Optional[str]=None,user=Depends(current_user)):
+    if not batch_id:
+        b=await db.batches.find_one({'active':True}); batch_id=b['id'] if b else None
+    q={'batch_id':batch_id}
+    if start or end: q['date']={}; q['date'].update({'$gte':start} if start else {}); q['date'].update({'$lte':end} if end else {})
+    txs=await db.transactions.find(q,{'_id':0}).to_list(10000)
+    fdays={f['date']:f for f in await db.finance_days.find({'batch_id':batch_id},{'_id':0}).to_list(1000)}
+    days={}
+    for t in txs: days.setdefault(t['date'],[]).append(t)
+    rows=[]; detail=[]
+    for date in sorted(days):
+        dtx=sorted(days[date],key=lambda x:x['arrival_time']); f=fdays.get(date)
+        netto=sum(t['netto_kg'] for t in dtx); beli=sum(t['total_amount'] for t in dtx)
+        rate=f['freight_per_kg'] if f else 200; angkut=netto*rate; modal=beli+angkut
+        row={'date':date,'tx_count':len(dtx),'netto_kg':netto,'total_beli':beli,'freight_per_kg':rate,'total_angkut':angkut,'total_modal':modal,'configured':bool(f)}
+        if f:
+            tare=f['total_tare_kg']; njual=netto-tare; hjual=njual*f['sip_price_per_kg']; pph=round(hjual*0.0025); untung=hjual-pph-modal
+            row.update({'total_tare_kg':tare,'grading_pct':round(tare/netto*100,2),'netto_jual':njual,'sip_price_per_kg':f['sip_price_per_kg'],'harga_jual':hjual,'pph22':pph,'untung_rugi':untung})
+        rows.append(row)
+        for t in dtx:
+            g=t.get('grading_tare_kg')
+            d={'id':t['id'],'code':t['transaction_code'],'date':date,'owner_name':t['owner_name'],'netto_kg':t['netto_kg'],'price_per_kg':t['price_per_kg'],'total_amount':t['total_amount'],'freight':t['netto_kg']*rate}
+            if f and g is not None:
+                d.update({'tare_kg':g,'grading_pct':round(g/t['netto_kg']*100,2),'netto_jual':t['netto_kg']-g,'harga_jual':(t['netto_kg']-g)*f['sip_price_per_kg']})
+            detail.append(d)
+    conf=[r for r in rows if r['configured']]
+    totals={'netto_kg':sum(r['netto_kg'] for r in rows),'total_beli':sum(r['total_beli'] for r in rows),'total_angkut':sum(r['total_angkut'] for r in rows),'total_modal':sum(r['total_modal'] for r in rows),'total_tare_kg':sum(r.get('total_tare_kg',0) for r in conf),'netto_jual':sum(r.get('netto_jual',0) for r in conf),'harga_jual':sum(r.get('harga_jual',0) for r in conf),'pph22':sum(r.get('pph22',0) for r in conf),'untung_rugi':sum(r.get('untung_rugi',0) for r in conf),'configured_days':len(conf),'total_days':len(rows)}
+    return {'days':rows,'totals':totals,'transactions':detail}
 
 @api.get('/analytics/summary')
 async def summary(batch_id:Optional[str]=None,start:Optional[str]=None,end:Optional[str]=None,user=Depends(current_user)):
